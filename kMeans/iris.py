@@ -8,63 +8,90 @@ import itertools
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import dash
+import dash_core_components as dcc 
+import dash_html_components as html 
+from dash.dependencies import Input, Output 
 
 iris = {k:v for k,v in datasets.load_iris().items() if k in ('data', 'feature_names', 'target', 'target_names')}
 iris = pd.concat([pd.DataFrame(iris['data'], columns = iris['feature_names']),
                   pd.Series([iris['target_names'][ix] for ix in iris['target']], name = 'type')],
                   axis = 1)
 
-## Show data
-sns.set_theme(context = 'paper', style = 'darkgrid')
-sns.pairplot(iris, hue = 'type')
-plt.show()
-
-## Types map
-iris_types = {ix : t for ix, t in zip(range(3), iris['type'].unique())}
+## Show data - inspection
+#sns.set_theme(context = 'paper', style = 'darkgrid')
+#sns.pairplot(iris, hue = 'type')
+#plt.show()
 
 ## Simple kMeans on each pair of features (assuming that the k is known)
-def cluster(df, sample = False):
-    ## Pairs
+def cluster(df):
+    ## Pairs    
     results = {pair: None for pair in list(itertools.combinations([c for c in df.columns if c != 'type'],2))}
-    ## Full results
-    #full_cols = ['split', 'f_1', 'f_1_value','f_2', 'f_2_value', 'cluster']
-    #full_df = pd.DataFrame(columns = full_cols)
-
+    
     ## Plot figure
-    fig = make_subplots(rows = len(results), cols = 1)
+    fig = make_subplots(rows = len(results), cols = 1, subplot_titles = [str(ix+1) for ix, p in enumerate(results)])
+    fig.update_layout(template = 'plotly', 
+                        width = 800, 
+                        height = 250 * len(results))
+    ## Set Colours
+    def colours(x):
+        colours_ = {'setosa' : '#41285e', 'versicolor': '#ab84da', 'virginica': '#6809d9', 'incorrect': '#ee3223'}
+        return colours_[x]
 
-    if not sample:
-        for ix, p in enumerate(results.keys()):
-            cl = KMeans(n_clusters = 3, random_state = 44).fit(df.loc[:,p])
-            out_df = pd.concat([df.loc[:,p],
-                                pd.Series(cl.labels_, name = 'cluster'), 
-                                pd.Series(df.loc[:,'type'], name = 'label')],axis =1)
+    ## Show incorrect assignments
+    def marks(x):
+        shapes = {1: 'circle', 0: 'x'}
+        return shapes[x]
+    
+    for ix, p in enumerate(results.keys()):
+        cl = KMeans(n_clusters = 3, random_state = 44).fit(df.loc[:,p])
+        out_df = pd.concat([df.loc[:,p],
+                            pd.Series(cl.labels_, name = 'cluster'), 
+                            pd.Series(df.loc[:,'type'], name = 'label')],axis =1)
+        ## Map assignments
+        cl_map = {out_df[out_df['label'] == t]['cluster'].value_counts().idxmax() : t for t in out_df['label'].unique()}
+        out_df['cluster'] = out_df.apply(lambda r: cl_map[r['cluster']], axis = 1)
+        out_df['correct_cluster'] = [int(b) for b in out_df['label'] == out_df['cluster']]
+        out_df['cluster_adj'] = [cl if ok else 'incorrect' for cl, ok in zip(out_df['cluster'], out_df['correct_cluster'])]
+        results[p] = {'out_df': out_df,
+                        'centroids': cl.cluster_centers_,
+                        'labels': cl.labels_,
+                        'inertia': cl.inertia_,
+                        'match': {l: out_df[out_df['label'] == l]['correct_cluster'].sum()/out_df[out_df['label'] == l].shape[0] \
+                            for l in out_df['label'].unique()},}
+        
+        ## Add to the figure
+        fig.add_trace(go.Scatter(x = np.array(out_df[p[0]]), 
+                                y = np.array(out_df[p[1]]),
+                                opacity = .8,
+                                marker = dict(color = list(map(colours, out_df['cluster_adj'])), 
+                                             symbol = list(map(marks, out_df['correct_cluster'])),
+                                              showscale = False),
+                                mode = 'markers',
+                                showlegend = False),
+                                row = ix+1, 
+                                col = 1)
 
-            results[p] = {'out_df': out_df,
-                            'centroids': cl.cluster_centers_,
-                            'labels': cl.labels_,
-                            'inertia': cl.inertia_,
-                            'match': {l: out_df[out_df['label'] == l]['cluster'].value_counts().max()/out_df[out_df['label'] == l].shape[0] \
-                                for l in out_df['label'].unique()},}
-            
-            ## Add to the figure
-            fig.add_trace(go.Scatter(out_df, x = p[0], y = p[1], color = 'cluster'))
+        fig.update_xaxes(title_text = p[0][:p[0].rfind(' ')], 
+                            row = ix+1, 
+                            col = 1, 
+                            title_standoff = 5)
+        fig.update_yaxes(title_text = p[1][:p[1].rfind(' ')], 
+                            row = ix+1, 
+                            col = 1, 
+                            title_standoff = 5)
+        
+        fig.update_layout(font = {'family': 'Calibri', 'size': 12})
+        #a = ", ".join([f"<span style=\"color:{colours(k)}\">"+str(k)+"</span> = <i>"+str(v)+"</i>" for k,v in results[p]["match"].items()])
+        fig['layout']['annotations'][ix].update(text = \
+            f'<b>CLUSTERING {ix+1}</b>'+\
+            f'<br><b>Inertia</b>: <i>{cl.inertia_:.2f}</i>'+\
+            f'<br><b>Accuracy</b>: {", ".join([str(k)+" = <i>"+str(v)+"</i>" for k,v in results[p]["match"].items()])}')
 
-            #out_df['split'] = ix 
-            #out_df['f_1'] = p[0]
-            #out_df['f_1_value'] = out_df.loc[:,p[0]]
-            #out_df['f_2'] = p[1]
-            #out_df['f_2_value'] = out_df.loc[:,p[1]]
-            #full_df = full_df.append(out_df.loc[:,full_cols], ignore_index = True)
+    return results, fig
 
-    ## Facet Grid    
-    fg = sns.FacetGrid(full_df, row = 'split', hue = 'cluster')
-    fg.map(sns.scatterplot, 'f_1_value', 'f_2_value')
-    plt.show()
-
-    return results, full_df
-
-r, f = cluster(iris)
+r, fg = cluster(iris)
+fg.show()
 
 
 
