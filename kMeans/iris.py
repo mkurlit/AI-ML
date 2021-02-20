@@ -8,10 +8,6 @@ import itertools
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-import dash
-import dash_core_components as dcc 
-import dash_html_components as html 
-from dash.dependencies import Input, Output 
 
 iris = {k:v for k,v in datasets.load_iris().items() if k in ('data', 'feature_names', 'target', 'target_names')}
 iris = pd.concat([pd.DataFrame(iris['data'], columns = iris['feature_names']),
@@ -32,7 +28,7 @@ def cluster(df):
     fig = make_subplots(rows = len(results), cols = 1, subplot_titles = [str(ix+1) for ix, p in enumerate(results)])
     fig.update_layout(template = 'plotly', 
                         width = 800, 
-                        height = 250 * len(results))
+                        height = 300 * len(results))
     ## Set Colours
     def colours(x):
         colours_ = {'setosa' : '#41285e', 'versicolor': '#ab84da', 'virginica': '#6809d9', 'incorrect': '#ee3223'}
@@ -43,8 +39,12 @@ def cluster(df):
         shapes = {1: 'circle', 0: 'x'}
         return shapes[x]
     
+    ## Track best feature pair
+    best = {'pair': 1, 'accuracy': -1}
+    
     for ix, p in enumerate(results.keys()):
-        cl = KMeans(n_clusters = 3, random_state = 44).fit(df.loc[:,p])
+        ## KMEANS++
+        cl = KMeans(n_clusters = 3, random_state = 44, algorithm = 'full').fit(df.loc[:,p])
         out_df = pd.concat([df.loc[:,p],
                             pd.Series(cl.labels_, name = 'cluster'), 
                             pd.Series(df.loc[:,'type'], name = 'label')],axis =1)
@@ -58,8 +58,13 @@ def cluster(df):
                         'labels': cl.labels_,
                         'inertia': cl.inertia_,
                         'match': {l: out_df[out_df['label'] == l]['correct_cluster'].sum()/out_df[out_df['label'] == l].shape[0] \
-                            for l in out_df['label'].unique()},}
+                            for l in out_df['label'].unique()},
+                        'accuracy': out_df.correct_cluster.sum()/out_df.shape[0],}
         
+        ## check if total accuracy surpassed the best
+        if results[p]['accuracy'] > best['accuracy']:
+            best.update({'pair': ix+1, 'accuracy': results[p]['accuracy']})
+
         ## Add to the figure
         fig.add_trace(go.Scatter(x = np.array(out_df[p[0]]), 
                                 y = np.array(out_df[p[1]]),
@@ -82,12 +87,16 @@ def cluster(df):
                             title_standoff = 5)
         
         fig.update_layout(font = {'family': 'Calibri', 'size': 12})
-        #a = ", ".join([f"<span style=\"color:{colours(k)}\">"+str(k)+"</span> = <i>"+str(v)+"</i>" for k,v in results[p]["match"].items()])
+        
         fig['layout']['annotations'][ix].update(text = \
             f'<b>CLUSTERING {ix+1}</b>'+\
             f'<br><b>Inertia</b>: <i>{cl.inertia_:.2f}</i>'+\
-            f'<br><b>Accuracy</b>: {", ".join([str(k)+" = <i>"+str(v)+"</i>" for k,v in results[p]["match"].items()])}')
-
+            f'<br><b>Accuracy</b>: {", ".join([str(k)+" = <i>"+str(v)+"</i>" for k,v in results[p]["match"].items()])}'+\
+            f'<br>TOTAL: {out_df.correct_cluster.sum()/out_df.shape[0]:.2f}')
+    
+    ## Mark best pair split
+    fig['layout']['annotations'][best['pair']-1]['text'] += ' <b>**BEST RUN</b>'
+    
     return results, fig
 
 r, fg = cluster(iris)
