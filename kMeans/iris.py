@@ -44,7 +44,7 @@ def cluster(df):
     
     for ix, p in enumerate(results.keys()):
         ## KMEANS++
-        cl = KMeans(n_clusters = 3, random_state = 44, algorithm = 'full').fit(df.loc[:,p])
+        cl = KMeans(n_clusters = 3, random_state = 44, algorithm = 'elkan', n_init=5, init = 'random').fit(df.loc[:,p])
         out_df = pd.concat([df.loc[:,p],
                             pd.Series(cl.labels_, name = 'cluster'), 
                             pd.Series(df.loc[:,'type'], name = 'label')],axis =1)
@@ -66,16 +66,33 @@ def cluster(df):
             best.update({'pair': ix+1, 'accuracy': results[p]['accuracy']})
 
         ## Add to the figure
-        fig.add_trace(go.Scatter(x = np.array(out_df[p[0]]), 
-                                y = np.array(out_df[p[1]]),
-                                opacity = .8,
-                                marker = dict(color = list(map(colours, out_df['cluster_adj'])), 
-                                             symbol = list(map(marks, out_df['correct_cluster'])),
-                                              showscale = False),
-                                mode = 'markers',
-                                showlegend = False),
-                                row = ix+1, 
-                                col = 1)
+        ## If first run then each group per trace so the legend can be visible
+        if ix == 0:
+            for l in out_df.cluster_adj.unique():
+                fig.add_trace(go.Scatter(x = np.array(out_df[out_df['cluster_adj'] == l][p[0]]),
+                                        y = np.array(out_df[out_df['cluster_adj'] == l][p[1]]),
+                                        opacity = .8,
+                                        marker = dict(color = colours(l), 
+                                                 symbol = marks(out_df[out_df['cluster_adj']==l]['correct_cluster'].unique()[0]),
+                                                  showscale = False,),
+                                        mode = 'markers',
+                                        legendgroup= '1' if l != 'incorrect' else '2',
+                                        showlegend = True,
+                                        name = l.upper()),
+                                        row = ix +1,
+                                        col = 1)
+            fig.update_layout(legend_traceorder = 'grouped')
+        else:    
+            fig.add_trace(go.Scatter(x = np.array(out_df[p[0]]), 
+                                    y = np.array(out_df[p[1]]),
+                                    opacity = .8,
+                                    marker = dict(color = list(map(colours, out_df['cluster_adj'])), 
+                                                 symbol = list(map(marks, out_df['correct_cluster'])),
+                                                  showscale = False,),
+                                    mode = 'markers',
+                                    showlegend = False),
+                                    row = ix+1, 
+                                    col = 1)
 
         fig.update_xaxes(title_text = p[0][:p[0].rfind(' ')], 
                             row = ix+1, 
@@ -96,6 +113,8 @@ def cluster(df):
     
     ## Mark best pair split
     fig['layout']['annotations'][best['pair']-1]['text'] += ' <b>**BEST RUN</b>'
+
+    fig.update_layout(legend_title_text = 'FLOWER TYPES')
     
     return results, fig
 
